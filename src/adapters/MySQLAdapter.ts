@@ -17,7 +17,7 @@ export class MySQLAdapter implements DbAdapter, SqlCapable {
       password: this.cfg.password,
       database: this.cfg.database,
     });
-    await this.pool.query("SELECT 1"); // smoke test
+    await this.pool.query("SELECT 1");
   }
 
   async query(sql: string, params: any[] = []) {
@@ -27,7 +27,6 @@ export class MySQLAdapter implements DbAdapter, SqlCapable {
 
   async listTables(): Promise<string[]> {
     const [rows] = await this.pool.query("SHOW TABLES");
-    // rows shape: [{ 'Tables_in_dbname': 'table1' }, ...]
     const firstKey =
       rows && typeof rows[0] === "object" ? Object.keys(rows[0])[0] : null;
     return firstKey ? (rows as any[]).map((r) => r[firstKey]) : [];

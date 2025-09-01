@@ -56,6 +56,7 @@ program
     }
   });
 
+// Run a SQL query (default DB)
 program
   .command("query")
   .requiredOption("-q, --query <sql>", "SQL to execute")

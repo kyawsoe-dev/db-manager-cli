@@ -12,7 +12,7 @@ export class MongoAdapter implements DbAdapter {
     this.client = new MongoClient(this.cfg.uri);
     await this.client.connect();
     this.db = this.client.db(this.cfg.dbName);
-    await this.db.command({ ping: 1 }); // smoke test
+    await this.db.command({ ping: 1 });
   }
 
   async find(collection: string, filter: any = {}, projection?: any, limit?: number) {

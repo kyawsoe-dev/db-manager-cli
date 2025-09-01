@@ -42,7 +42,6 @@ export function loadConfig(): Record<string, AnyDbConfig> {
     }
   }
 
-  // helper to parse DB type
   function parseDbType(t?: string): "postgres" | "mysql" | "mongo" {
     if (t === "mysql" || t === "mongo") return t;
     return "postgres"; // default
