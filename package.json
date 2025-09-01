@@ -1,5 +1,5 @@
 {
-  "name": "dbman",
+  "name": "muti-dbman-cli",
   "version": "0.1.1",
   "description": "Multi-DB manager CLI (Postgres, MySQL, MongoDB)",
   "main": "index.js",
