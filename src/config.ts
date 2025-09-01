@@ -4,12 +4,23 @@ import YAML from "yaml";
 import { z } from "zod";
 import dotenv from "dotenv";
 import { AnyDbConfig } from "./types";
+import prompts from "prompts";
 
 dotenv.config();
 
 const schema = z.object({
   connections: z.record(z.string(), z.unknown()),
 });
+
+interface ConnectionConfig {
+  type?: string | number;
+  host?: string;
+  port?: number;
+  user?: string;
+  password?: string;
+  database?: string;
+  [key: string]: any;
+}
 
 function resolveEnvStrings<T>(obj: T): T {
   if (obj && typeof obj === "object") {
@@ -27,74 +38,122 @@ function resolveEnvStrings<T>(obj: T): T {
   return obj;
 }
 
+function getConfigFilePath(): string {
+  return (
+    process.env.DBMAN_CONFIG_PATH ||
+    path.join(process.env.HOME || ".", ".dbman.yaml")
+  );
+}
+
 export function loadConfig(): Record<string, AnyDbConfig> {
   const locations = [
     path.resolve(process.cwd(), ".dbman.yaml"),
-    path.resolve(process.cwd(), ".dbman.yml"),
-    process.env.HOME ? path.join(process.env.HOME, ".dbman.yaml") : "",
+    getConfigFilePath(),
   ].filter(Boolean);
 
-  let doc: any = null;
+  let mergedDoc: any = { connections: {} };
+
   for (const loc of locations) {
     if (fs.existsSync(loc)) {
-      doc = YAML.parse(fs.readFileSync(loc, "utf8"));
-      break;
+      const parsed = YAML.parse(fs.readFileSync(loc, "utf8")) || {
+        connections: {},
+      };
+      if (parsed?.connections) {
+        mergedDoc.connections = {
+          ...mergedDoc.connections,
+          ...parsed.connections,
+        };
+      }
     }
   }
 
-  function parseDbType(t?: string): "postgres" | "mysql" | "mongo" {
-    if (t === "mysql" || t === "mongo") return t;
-    return "postgres"; // default
-  }
+  // Default fallback
+  const defaultCfg: AnyDbConfig = {
+    name: "default",
+    type: (process.env.DBMAN_DEFAULT_TYPE as any) || "postgres",
+    host: process.env.DBMAN_DEFAULT_HOST || "localhost",
+    port: Number(process.env.DBMAN_DEFAULT_PORT || 5432),
+    user: process.env.DBMAN_DEFAULT_USER || "postgres",
+    password: process.env.DBMAN_DEFAULT_PASSWORD || "postgres",
+    database: process.env.DBMAN_DEFAULT_NAME || "appdb",
+    uri: process.env.DBMAN_DEFAULT_URI,
+  };
 
-  function makeDefaultCfg(): AnyDbConfig {
-    const type = process.env.DBMAN_DEFAULT_TYPE;
-    if (type === "mysql") {
-      return {
-        name: "default",
-        type: "mysql",
-        host: process.env.DBMAN_DEFAULT_HOST || "localhost",
-        port: Number(process.env.DBMAN_DEFAULT_PORT || 3306),
-        user: process.env.DBMAN_DEFAULT_USER || "root",
-        password: process.env.DBMAN_DEFAULT_PASSWORD || "root",
-        database: process.env.DBMAN_DEFAULT_NAME || "appdb",
-      };
-    }
-    if (type === "mongo") {
-      return {
-        name: "default",
-        type: "mongo",
-        uri: process.env.DBMAN_DEFAULT_URI || "mongodb://localhost:27017",
-        dbName: process.env.DBMAN_DEFAULT_NAME || "appdb",
-      };
-    }
-    // default to postgres
-    return {
-      name: "default",
-      type: "postgres",
-      host: process.env.DBMAN_DEFAULT_HOST || "localhost",
-      port: Number(process.env.DBMAN_DEFAULT_PORT || 5432),
-      user: process.env.DBMAN_DEFAULT_USER || "postgres",
-      password: process.env.DBMAN_DEFAULT_PASSWORD || "postgres",
-      database: process.env.DBMAN_DEFAULT_NAME || "appdb",
+  if (!mergedDoc.connections.default) {
+    mergedDoc.connections.default = defaultCfg;
+  } else {
+    mergedDoc.connections.default = {
+      ...defaultCfg,
+      ...mergedDoc.connections.default,
     };
   }
 
-  const defaultCfg = makeDefaultCfg();
-
-  if (!doc) doc = { connections: { default: defaultCfg } };
-  else doc.connections.default = { ...defaultCfg, ...doc.connections.default };
-
-  const parsed = schema.parse(doc);
+  const parsed = schema.parse(mergedDoc);
   const result: Record<string, AnyDbConfig> = {};
   for (const [name, raw] of Object.entries(parsed.connections)) {
-    const cfg = resolveEnvStrings(raw) as any;
-    const type = cfg.type;
-    if (!["postgres", "mysql", "mongo"].includes(type)) {
-      throw new Error(`Unsupported "type" for connection "${name}": ${type}`);
+    const cfg = resolveEnvStrings(raw || {}) as Record<string, any>;
+
+    let type: "postgres" | "mysql" | "mongo";
+
+    if (cfg.type === 0 || cfg.type === "postgres") type = "postgres";
+    else if (cfg.type === 1 || cfg.type === "mysql") type = "mysql";
+    else if (cfg.type === 2 || cfg.type === "mongo") type = "mongo";
+    else {
+      console.warn(
+        `⚠️ Skipping connection "${name}" - invalid type "${cfg.type}"`
+      );
+      continue;
     }
-    result[name] = { name, ...cfg } as AnyDbConfig;
+
+    result[name] = {
+      name,
+      ...cfg,
+      type,
+    } as AnyDbConfig;
   }
 
   return result;
+}
+
+export async function promptForMissingCredentials(cfg: AnyDbConfig) {
+  if (cfg.type === "mongo") return cfg;
+  if (!cfg.user || !cfg.password || !cfg.database) {
+    const response = await prompts([
+      {
+        type: "text",
+        name: "user",
+        message: `DB user for ${cfg.name}:`,
+        initial: cfg.user || "",
+      },
+      {
+        type: "password",
+        name: "password",
+        message: `DB password for ${cfg.name}:`,
+        initial: cfg.password || "",
+      },
+      {
+        type: "text",
+        name: "database",
+        message: `DB name for ${cfg.name}:`,
+        initial: cfg.database || "",
+      },
+    ]);
+    cfg = { ...cfg, ...response };
+  }
+  return cfg;
+}
+
+export function saveConfig(name: string, cfg: AnyDbConfig) {
+  const configFile = getConfigFilePath();
+
+  let doc: any = { connections: {} };
+  if (fs.existsSync(configFile)) {
+    doc = YAML.parse(fs.readFileSync(configFile, "utf8")) || {
+      connections: {},
+    };
+  }
+
+  doc.connections[name] = { ...cfg, name };
+
+  fs.writeFileSync(configFile, YAML.stringify(doc), "utf8");
 }

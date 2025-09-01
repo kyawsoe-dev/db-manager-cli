@@ -22,7 +22,7 @@ Compatible with **Node.js >=18**.
 ## 📥 Installation
 
 ```bash
-npm install -g dbman
+npm i -g muti-dbman-cli
 ```
 
 ## 🚀 Usage Step by Step
