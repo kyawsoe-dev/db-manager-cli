@@ -16,10 +16,11 @@
     "sql",
     "mysql",
     "mongodb",
-    "dbman"
+    "dbman",
+    "cli"
   ],
   "author": "Kyaw Soe",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "dependencies": {
     "commander": "^14.0.0",

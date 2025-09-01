@@ -125,11 +125,6 @@ program
   .command("delete <name>")
   .description("Delete a connection from config")
   .action((name: string) => {
-    if (name === "default") {
-      console.error("❌ Cannot delete the default connection!");
-      process.exit(1);
-    }
-
     const files = [getProjectConfigFile(), getUserConfigFile()];
     let deleted = false;
 
@@ -207,6 +202,206 @@ program
     const rows = await sqlAdapter.query(opts.query, []);
     if (opts.json) console.log(JSON.stringify(rows, null, 2));
     else console.table(rows);
+    await adapter.close();
+  });
+
+// Create a new database
+program
+  .command("create-db <dbname>")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Create a new database")
+  .action(async (dbname, opts) => {
+    let cfg = getCfgOrDie(opts.db);
+    cfg = await promptForMissingCredentials(cfg);
+    const adapter = makeAdapter(cfg);
+
+    if (adapter.kind() === "mongo") {
+      console.error(
+        "MongoDB uses databases dynamically, no explicit create needed."
+      );
+      return;
+    }
+
+    await adapter.connect();
+    const sqlAdapter = adapter as unknown as SqlCapable;
+    await sqlAdapter.query(`CREATE DATABASE ${dbname}`);
+    console.log(`✅ Database "${dbname}" created.`);
+    await adapter.close();
+  });
+
+// Drop a database
+program
+  .command("drop-db <dbname>")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Drop a database")
+  .action(async (dbname, opts) => {
+    let cfg = getCfgOrDie(opts.db);
+    cfg = await promptForMissingCredentials(cfg);
+    const adapter = makeAdapter(cfg);
+
+    if (adapter.kind() === "mongo") {
+      console.error("Use Mongo shell/driver to drop databases.");
+      return;
+    }
+
+    await adapter.connect();
+    const sqlAdapter = adapter as unknown as SqlCapable;
+    await sqlAdapter.query(`DROP DATABASE ${dbname}`);
+    console.log(`✅ Database "${dbname}" dropped.`);
+    await adapter.close();
+  });
+
+// Create a new table
+program
+  .command("create-table <table>")
+  .option(
+    "-c, --columns <cols...>",
+    "Column definitions, e.g. name:string age:int"
+  )
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Create a new table")
+  .action(async (table, opts) => {
+    let cfg = getCfgOrDie(opts.db);
+    cfg = await promptForMissingCredentials(cfg);
+    const adapter = makeAdapter(cfg);
+
+    if (adapter.kind() === "mongo") {
+      console.error("MongoDB creates collections dynamically on insert.");
+      return;
+    }
+
+    await adapter.connect();
+    const sqlAdapter = adapter as unknown as SqlCapable;
+
+    const cols = (opts.columns || []).map((c: string) => {
+      const [name, type] = c.split(":");
+      return `${name} ${type.toUpperCase()}`;
+    });
+
+    const sql = `CREATE TABLE ${table} (${cols.join(", ")})`;
+    await sqlAdapter.query(sql);
+    console.log(`✅ Table "${table}" created.`);
+    await adapter.close();
+  });
+
+// Drop a table
+program
+  .command("drop-table <table>")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Drop a table")
+  .action(async (table, opts) => {
+    let cfg = getCfgOrDie(opts.db);
+    cfg = await promptForMissingCredentials(cfg);
+    const adapter = makeAdapter(cfg);
+
+    if (adapter.kind() === "mongo") {
+      console.error("Use Mongo command to drop collections.");
+      return;
+    }
+
+    await adapter.connect();
+    const sqlAdapter = adapter as unknown as SqlCapable;
+    await sqlAdapter.query(`DROP TABLE ${table}`);
+    console.log(`✅ Table "${table}" dropped.`);
+    await adapter.close();
+  });
+
+// SELECT
+program
+  .command("select <table>")
+  .option("-w, --where <condition>", "WHERE clause, e.g. age>30")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Select rows from a table")
+  .action(async (table, opts) => {
+    let cfg = getCfgOrDie(opts.db);
+    cfg = await promptForMissingCredentials(cfg);
+    const adapter = makeAdapter(cfg);
+
+    await adapter.connect();
+    const sqlAdapter = adapter as unknown as SqlCapable;
+    const sql = `SELECT * FROM ${table} ${
+      opts.where ? `WHERE ${opts.where}` : ""
+    }`;
+    const rows = await sqlAdapter.query(sql, []);
+    console.table(rows);
+    await adapter.close();
+  });
+
+// INSERT
+program
+  .command("insert <table>")
+  .option(
+    "-v, --values <pairs...>",
+    "Column=Value pairs, e.g. name=John age=30"
+  )
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Insert a row")
+  .action(async (table, opts) => {
+    let cfg = getCfgOrDie(opts.db);
+    cfg = await promptForMissingCredentials(cfg);
+    const adapter = makeAdapter(cfg);
+
+    await adapter.connect();
+    const sqlAdapter = adapter as unknown as SqlCapable;
+
+    const entries = (opts.values || []).map((v: string) => v.split("="));
+    const cols = entries.map(([col]) => col);
+    const vals = entries.map(([_, val]) => `'${val}'`);
+
+    const sql = `INSERT INTO ${table} (${cols.join(",")}) VALUES (${vals.join(
+      ","
+    )})`;
+    await sqlAdapter.query(sql);
+    console.log(`✅ Row inserted into "${table}"`);
+    await adapter.close();
+  });
+
+// UPDATE
+program
+  .command("update <table>")
+  .option("-s, --set <pairs...>", "Column=Value pairs")
+  .option("-w, --where <condition>", "WHERE clause")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Update rows")
+  .action(async (table, opts) => {
+    let cfg = getCfgOrDie(opts.db);
+    cfg = await promptForMissingCredentials(cfg);
+    const adapter = makeAdapter(cfg);
+
+    await adapter.connect();
+    const sqlAdapter = adapter as unknown as SqlCapable;
+
+    const sets = (opts.set || []).map((s: string) => {
+      const [col, val] = s.split("=");
+      return `${col}='${val}'`;
+    });
+
+    const sql = `UPDATE ${table} SET ${sets.join(", ")} ${
+      opts.where ? `WHERE ${opts.where}` : ""
+    }`;
+    await sqlAdapter.query(sql);
+    console.log(`✅ Rows updated in "${table}"`);
+    await adapter.close();
+  });
+
+// DELETE
+program
+  .command("delete-row <table>")
+  .option("-w, --where <condition>", "WHERE clause")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Delete rows")
+  .action(async (table, opts) => {
+    let cfg = getCfgOrDie(opts.db);
+    cfg = await promptForMissingCredentials(cfg);
+    const adapter = makeAdapter(cfg);
+
+    await adapter.connect();
+    const sqlAdapter = adapter as unknown as SqlCapable;
+    const sql = `DELETE FROM ${table} ${
+      opts.where ? `WHERE ${opts.where}` : ""
+    }`;
+    await sqlAdapter.query(sql);
+    console.log(`✅ Rows deleted from "${table}"`);
     await adapter.close();
   });
 

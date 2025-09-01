@@ -12,16 +12,6 @@ const schema = z.object({
   connections: z.record(z.string(), z.unknown()),
 });
 
-interface ConnectionConfig {
-  type?: string | number;
-  host?: string;
-  port?: number;
-  user?: string;
-  password?: string;
-  database?: string;
-  [key: string]: any;
-}
-
 function resolveEnvStrings<T>(obj: T): T {
   if (obj && typeof obj === "object") {
     for (const [k, v] of Object.entries(obj as any)) {
@@ -67,27 +57,6 @@ export function loadConfig(): Record<string, AnyDbConfig> {
     }
   }
 
-  // Default fallback
-  const defaultCfg: AnyDbConfig = {
-    name: "default",
-    type: (process.env.DBMAN_DEFAULT_TYPE as any) || "postgres",
-    host: process.env.DBMAN_DEFAULT_HOST || "localhost",
-    port: Number(process.env.DBMAN_DEFAULT_PORT || 5432),
-    user: process.env.DBMAN_DEFAULT_USER || "postgres",
-    password: process.env.DBMAN_DEFAULT_PASSWORD || "postgres",
-    database: process.env.DBMAN_DEFAULT_NAME || "appdb",
-    uri: process.env.DBMAN_DEFAULT_URI,
-  };
-
-  if (!mergedDoc.connections.default) {
-    mergedDoc.connections.default = defaultCfg;
-  } else {
-    mergedDoc.connections.default = {
-      ...defaultCfg,
-      ...mergedDoc.connections.default,
-    };
-  }
-
   const parsed = schema.parse(mergedDoc);
   const result: Record<string, AnyDbConfig> = {};
   for (const [name, raw] of Object.entries(parsed.connections)) {
@@ -98,12 +67,6 @@ export function loadConfig(): Record<string, AnyDbConfig> {
     if (cfg.type === 0 || cfg.type === "postgres") type = "postgres";
     else if (cfg.type === 1 || cfg.type === "mysql") type = "mysql";
     else if (cfg.type === 2 || cfg.type === "mongo") type = "mongo";
-    else {
-      console.warn(
-        `⚠️ Skipping connection "${name}" - invalid type "${cfg.type}"`
-      );
-      continue;
-    }
 
     result[name] = {
       name,
