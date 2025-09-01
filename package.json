@@ -1,6 +1,6 @@
 {
   "name": "dbman",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Multi-DB manager CLI (Postgres, MySQL, MongoDB)",
   "main": "index.js",
   "bin": {
@@ -11,7 +11,13 @@
     "dev": "ts-node src/index.ts",
     "prepare": "npm run build"
   },
-  "keywords": ["postgres", "sql", "mysql", "mongodb", "dbman"],
+  "keywords": [
+    "postgres",
+    "sql",
+    "mysql",
+    "mongodb",
+    "dbman"
+  ],
   "author": "Kyaw Soe",
   "license": "ISC",
   "type": "commonjs",
