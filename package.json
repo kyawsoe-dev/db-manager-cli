@@ -19,6 +19,9 @@
     "dbman",
     "cli"
   ],
+  "files": [
+    "dist"
+  ],
   "author": "Kyaw Soe",
   "license": "MIT",
   "type": "commonjs",
