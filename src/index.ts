@@ -1,18 +1,25 @@
 #!/usr/bin/env node
-import { Command } from "commander";
 import fs from "fs";
 import YAML from "yaml";
 import path from "path";
-import { loadConfig, promptForMissingCredentials, saveConfig } from "./config";
-import { makeAdapter } from "./factory";
-import { SqlCapable, AnyDbConfig } from "./types";
-import { testConnection } from "./utils/testConnection";
-import { ensureDatabaseExists } from "./utils/ensureDatabase";
-
 import prompts from "prompts";
+import { Command } from "commander";
+import { makeAdapter } from "./factory";
+import { MongoAdapter } from "./adapters/MongoAdapter";
+import { SqlCapable, AnyDbConfig } from "./types";
+import { loadConfig, promptForMissingCredentials, saveConfig } from "./config";
+import { testConnection, ensureDatabaseExists, runDoctor } from "./utils";
+
+const packageJson = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "../package.json"), "utf-8")
+);
+
 const program = new Command();
 
-program.name("dbman").description("Multi-DB manager CLI").version("0.1.0");
+program
+  .name("dbman")
+  .description("Multi-DB manager CLI")
+  .version(packageJson.version, "-v, --version", "output the version number");
 
 function getCfgOrDie(name: string) {
   const cfgs = loadConfig();
@@ -27,6 +34,14 @@ function getUserConfigFile() {
 function getProjectConfigFile() {
   return path.resolve(process.cwd(), ".dbman.yaml");
 }
+
+// Diagnose database setup
+program
+  .command("doctor")
+  .description("Check DB servers and show installation guide if missing")
+  .action(async () => {
+    await runDoctor();
+  });
 
 // Add or update connection
 program
@@ -47,57 +62,69 @@ program
       },
     ]);
 
-    let defaults: any = {};
-    switch (basic.type) {
-      case "postgres":
-        defaults = { port: 5432, user: "postgres", database: "appdb" };
-        break;
-      case "mysql":
-        defaults = { port: 3306, user: "root", database: "appdb" };
-        break;
-      case "mongo":
-        defaults = { uri: "mongodb://localhost:27017", dbName: "test" };
-        break;
-    }
-
-    const details = await prompts([
-      {
-        type: "text",
-        name: "host",
-        message: "Host:",
-        initial: defaults.host || "localhost",
-      },
-      {
-        type: "number",
-        name: "port",
-        message: "Port:",
-        initial: defaults.port,
-      },
-      { type: "text", name: "user", message: "User:", initial: defaults.user },
-      { type: "password", name: "password", message: "Password:" },
-      {
-        type: "text",
-        name: "database",
-        message: "Database name:",
-        initial: defaults.database,
-      },
-      {
-        type: "text",
-        name: "uri",
-        message: "Mongo URI (if mongo):",
-        initial: defaults.uri,
-      },
-    ]);
-
     let cfg: AnyDbConfig;
+
     if (basic.type === "mongo") {
+      const mongoDetails = await prompts([
+        {
+          type: "text",
+          name: "uri",
+          message: "Mongo URI:",
+          initial: "mongodb://localhost:27017",
+        },
+        {
+          type: "text",
+          name: "dbName",
+          message: "Database name:",
+          initial: "test",
+        },
+      ]);
+
       cfg = {
         type: "mongo",
-        uri: details.uri,
-        dbName: details.database || defaults.dbName,
+        uri: mongoDetails.uri,
+        dbName: mongoDetails.dbName,
         name: basic.name,
       };
     } else {
+      const defaults =
+        basic.type === "postgres"
+          ? {
+              host: "localhost",
+              port: 5432,
+              user: "postgres",
+              database: "appdb",
+            }
+          : { host: "localhost", port: 3306, user: "root", database: "appdb" };
+
+      const details = await prompts([
+        {
+          type: "text",
+          name: "host",
+          message: "Host:",
+          initial: defaults.host,
+        },
+        {
+          type: "number",
+          name: "port",
+          message: "Port:",
+          initial: defaults.port,
+        },
+        {
+          type: "text",
+          name: "user",
+          message: "User:",
+          initial: defaults.user,
+        },
+        { type: "password", name: "password", message: "Password:" },
+        {
+          type: "text",
+          name: "database",
+          message: "Database name:",
+          initial: defaults.database,
+        },
+      ]);
+
       cfg = {
         type: basic.type,
         host: details.host,
@@ -111,7 +138,7 @@ program
 
     try {
       console.log("🔄 Testing connection...");
-      if (basic.type !== "mongo") await ensureDatabaseExists(cfg);
+      await ensureDatabaseExists(cfg);
       await testConnection(cfg);
       saveConfig(basic.name, cfg);
       console.log(`✅ Connection "${basic.name}" saved and verified.`);
@@ -156,9 +183,22 @@ program
   .description("List connections")
   .action(() => {
     const cfgs = loadConfig();
-    console.table(
-      Object.values(cfgs).map((c) => ({ name: c.name, type: c.type }))
-    );
+
+    const tableData = Object.values(cfgs).map((c) => {
+      const base: any = { name: c.name, type: c.type };
+
+      if ("host" in c) base.host = c.host;
+      if ("port" in c) base.port = c.port;
+      if ("user" in c) base.user = c.user;
+      if ("database" in c) base.database = c.database;
+
+      if ("uri" in c) base.uri = c.uri;
+      if ("dbName" in c) base.dbName = c.dbName;
+
+      return base;
+    });
+
+    console.table(tableData);
   });
 
 // Test connection
@@ -195,7 +235,6 @@ program
     if (adapter.kind() === "mongo") {
       console.error("Use Mongo commands for MongoDB");
       process.exit(1);
-      return;
     }
     await adapter.connect();
     const sqlAdapter = adapter as unknown as SqlCapable;
@@ -402,6 +441,140 @@ program
     }`;
     await sqlAdapter.query(sql);
     console.log(`✅ Rows deleted from "${table}"`);
+    await adapter.close();
+  });
+
+// MongoDB specific utilities
+function parseKeyValuePairs(pairs: string[]) {
+  const obj: any = {};
+  (pairs || []).forEach((pair) => {
+    const [key, val] = pair.split("=");
+    obj[key] = isNaN(Number(val)) ? val : Number(val);
+  });
+  return obj;
+}
+
+// List collections
+program
+  .command("mongo-list-collections")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("List all collections in a MongoDB database")
+  .action(async (opts) => {
+    const cfg = await promptForMissingCredentials(getCfgOrDie(opts.db));
+    const adapter = makeAdapter(cfg) as MongoAdapter;
+
+    if (adapter.kind() !== "mongo") {
+      console.error("Not a MongoDB connection");
+      process.exit(1);
+    }
+
+    await adapter.connect();
+    const cols = await adapter.listCollections();
+    console.table(cols);
+    await adapter.close();
+  });
+
+// Insert document (creates collection if not exists)
+program
+  .command("mongo-insert <collection> [pairs...]")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Insert a document into a collection")
+  .action(async (collection, pairs: string[], opts) => {
+    const cfg = await promptForMissingCredentials(getCfgOrDie(opts.db));
+    const adapter = makeAdapter(cfg) as MongoAdapter;
+
+    await adapter.connect();
+    const doc = parseKeyValuePairs(pairs || []);
+    await adapter.insert(collection, doc);
+    console.log(`✅ Document inserted into "${collection}"`);
+    await adapter.close();
+  });
+
+// Find documents
+program
+  .command("mongo-find <collection>")
+  .option("-w, --where <json>", "Filter as JSON string")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Find documents in a collection")
+  .action(async (collection, opts) => {
+    const cfg = await promptForMissingCredentials(getCfgOrDie(opts.db));
+    const adapter = makeAdapter(cfg) as MongoAdapter;
+
+    if (adapter.kind() !== "mongo") {
+      console.error("Not a MongoDB connection");
+      process.exit(1);
+    }
+
+    await adapter.connect();
+    const filter = opts.where ? JSON.parse(opts.where) : {};
+    const docs = await adapter.find(collection, filter);
+    console.table(docs);
+    await adapter.close();
+  });
+
+// Update documents
+program
+  .command("mongo-update <collection>")
+  .option("-s, --set <pairs...>", "key=value pairs")
+  .option("-w, --where <json>", "Filter as JSON string")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Update documents in a collection")
+  .action(async (collection, opts) => {
+    const cfg = await promptForMissingCredentials(getCfgOrDie(opts.db));
+    const adapter = makeAdapter(cfg) as MongoAdapter;
+
+    if (adapter.kind() !== "mongo") {
+      console.error("Not a MongoDB connection");
+      process.exit(1);
+    }
+
+    await adapter.connect();
+    const filter = opts.where ? JSON.parse(opts.where) : {};
+    const update = parseKeyValuePairs(opts.set || []);
+    await adapter.update(collection, filter, update);
+    console.log(`✅ Documents updated in "${collection}"`);
+    await adapter.close();
+  });
+
+// Delete documents
+program
+  .command("mongo-delete <collection>")
+  .option("-w, --where <json>", "Filter as JSON string")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Delete documents from a collection")
+  .action(async (collection, opts) => {
+    const cfg = await promptForMissingCredentials(getCfgOrDie(opts.db));
+    const adapter = makeAdapter(cfg) as MongoAdapter;
+
+    if (adapter.kind() !== "mongo") {
+      console.error("Not a MongoDB connection");
+      process.exit(1);
+    }
+
+    await adapter.connect();
+    const filter = opts.where ? JSON.parse(opts.where) : {};
+    await adapter.delete(collection, filter);
+    console.log(`✅ Documents deleted from "${collection}"`);
+    await adapter.close();
+  });
+
+// Drop collection
+program
+  .command("mongo-drop-collection <collection>")
+  .option("-d, --db <name>", "Connection name", "default")
+  .description("Drop a collection")
+  .action(async (collection, opts) => {
+    const cfg = await promptForMissingCredentials(getCfgOrDie(opts.db));
+    const adapter = makeAdapter(cfg) as MongoAdapter;
+
+    if (adapter.kind() !== "mongo") {
+      console.error("Not a MongoDB connection");
+      process.exit(1);
+    }
+
+    await adapter.connect();
+    await adapter.dropCollection(collection);
+    console.log(`✅ Collection "${collection}" dropped`);
     await adapter.close();
   });
 

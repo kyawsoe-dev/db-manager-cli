@@ -6,7 +6,6 @@ connections:
     user: postgres
     password: postgres
     database: appdb
-
   mymysql:
     type: mysql
     host: localhost
@@ -14,8 +13,3 @@ connections:
     user: root
     password: root
     database: appdb
-
-  mymongo:
-    type: mongo
-    uri: "mongodb://localhost:27017"
-    dbName: appdb

@@ -1,7 +1,5 @@
 import { AnyDbConfig, DbAdapter } from "./types";
-import { PostgresAdapter } from "./adapters/PostgresAdapter";
-import { MySQLAdapter } from "./adapters/MySQLAdapter";
-import { MongoAdapter } from "./adapters/MongoAdapter";
+import { PostgresAdapter, MySQLAdapter, MongoAdapter } from "./adapters";
 
 export function makeAdapter(cfg: AnyDbConfig): DbAdapter {
   switch (cfg.type) {
