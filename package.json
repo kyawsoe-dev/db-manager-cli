@@ -11,6 +11,10 @@
     "dev": "ts-node src/index.ts",
     "prepare": "npm run build"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kyawsoe-dev/db-manager-cli.git"
+  },
   "keywords": [
     "postgres",
     "sql",
@@ -24,6 +28,7 @@
   ],
   "author": "Kyaw Soe",
   "license": "MIT",
+  "homepage": "https://github.com/kyawsoe-dev/db-manager-cli#readme",
   "type": "commonjs",
   "dependencies": {
     "commander": "^14.0.0",
